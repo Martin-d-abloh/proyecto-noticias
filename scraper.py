@@ -3,6 +3,8 @@ import csv
 import feedparser
 from concurrent.futures import ThreadPoolExecutor
 import logging
+import mysql.connector
+from dateutil import parser
 
 # Configuración de logging (registrar mensajes durante la ejecución de un programa)
 logging.basicConfig(filename="scraper.log", level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -32,14 +34,41 @@ def procesar_medio(medio):
 
         noticias = []
         for entry in feed.entries[:10]:  # Limitamos a 10 titulares por medio
-            fecha = entry.get("published", "No disponible")[:10]
+            fecha_raw = entry.get("published", "")
+            try:
+                fecha = parser.parse(fecha_raw).date().isoformat()
+            except Exception:
+                fecha = "0000-00-00"  # Fecha por defecto en caso de error
+
             titular = entry.get("title", "Sin título")
             enlace = entry.get("link", "Sin enlace")
             noticias.append([fecha, medio["nombre"], medio["escala"], titular, enlace])
+
         return noticias
     except Exception as e:
         logging.error(f"⚠️ Error al procesar {medio['nombre']}: {e}")
         return []
+
+def insertar_en_mysql(noticias):
+    try:
+        conexion = mysql.connector.connect(
+            host="localhost",
+            user="root",
+            password="MYSQL420",
+            database="proyecto_noticias"
+        )
+        cursor = conexion.cursor()
+        query = """
+        INSERT INTO titulares (fecha, fuente, escala, titular, enlace)
+        VALUES (%s, %s, %s, %s, %s)
+        """
+        cursor.executemany(query, noticias)
+        conexion.commit()
+        cursor.close()
+        conexion.close()
+        logging.info("✅ Noticias guardadas en MySQL.")
+    except mysql.connector.Error as err:
+        logging.error(f"❌ Error al insertar en MySQL: {err}")
 
 # Procesar medios en paralelo
 with ThreadPoolExecutor() as executor:
@@ -53,4 +82,9 @@ with open(output_path, "w", newline="", encoding="utf-8") as file:
         writer.writerows(noticias)
 
 logging.info(f"📌 Noticias guardadas en: {output_path}")
+
+# Insertar resultados en la base de datos
+for noticias in resultados:
+    if noticias:
+        insertar_en_mysql(noticias)
 
